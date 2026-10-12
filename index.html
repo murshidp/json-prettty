@@ -163,6 +163,37 @@
     min-width: 44px; white-space: pre;
   }
   pre { margin: 0; padding: 14px 16px; flex: 1; white-space: pre; }
+
+  /* Collapsible tree */
+  .tree { flex: 1; overflow: auto; padding: 14px 0; counter-reset: ln; }
+  .tree .ln {
+    position: relative; white-space: pre; padding-right: 16px;
+    padding-left: calc(64px + var(--d, 0) * var(--ind, 2ch)); min-height: 1.65em;
+  }
+  .tree .ln::before {
+    counter-increment: ln; content: counter(ln);
+    position: absolute; left: 0; width: 40px; text-align: right;
+    color: var(--faint); user-select: none;
+  }
+  .tree .ln:hover { background: var(--accent-soft); }
+  .tw {
+    position: absolute; margin-left: -20px; width: 18px; height: 1.65em;
+    display: inline-grid; place-items: center; cursor: pointer; user-select: none;
+    color: var(--muted); border-radius: 4px; font-size: 13px; transition: transform .15s, color .15s;
+  }
+  .tw:hover { color: var(--accent); }
+  .node.closed > .ln > .tw { transform: rotate(-90deg); }
+  .node > .ln .sum, .node > .ln .sum-end { display: none; }
+  .node.closed > .ln .sum-end { display: inline; }
+  .node.closed > .kids, .node.closed > .end { display: none; }
+  .node.closed > .ln .sum { display: inline; }
+  .sum {
+    color: var(--muted); background: var(--accent-soft); border-radius: 5px;
+    padding: 0 6px; margin: 0 2px; font-size: 11.5px; cursor: pointer;
+  }
+  .sum:hover { color: var(--accent); }
+  .mini.icon-only { padding: 0 7px; }
+  .out-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; align-self: center; }
   .k { color: var(--k); } .s { color: var(--s); } .n { color: var(--n); }
   .b { color: var(--b); } .nl { color: var(--nl); font-style: italic; } .p { color: var(--p); }
   .empty {
@@ -272,6 +303,11 @@
       <div class="panel-head">
         <div class="panel-title">Output</div>
         <div class="panel-actions">
+          <button class="mini" id="expandBtn" title="Expand all">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 15l5 5 5-5M7 9l5-5 5 5"/></svg>Expand</button>
+          <button class="mini" id="collapseBtn" title="Collapse all (keeps top level open)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 20l5-5 5 5M7 4l5 5 5-5"/></svg>Collapse</button>
+          <span class="out-sep"></span>
           <button class="mini" id="copyBtn" title="Copy output">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
           <button class="mini" id="downloadBtn" title="Download .json">
@@ -409,6 +445,40 @@
     $("stats").innerHTML = items.map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`).join("");
   }
 
+  // Collapsible tree rendering
+  function scalarHtml(v) {
+    if (v === null) return `<span class="nl">null</span>`;
+    if (typeof v === "string") return `<span class="s">${esc(JSON.stringify(v))}</span>`;
+    if (typeof v === "boolean") return `<span class="b">${v}</span>`;
+    return `<span class="n">${v}</span>`;
+  }
+  function renderTree(value) {
+    const out = [];
+    const comma = `<span class="p">,</span>`;
+    (function walk(v, d, key, last) {
+      const k = key !== undefined ? `<span class="k">${esc(JSON.stringify(key))}</span><span class="p">: </span>` : "";
+      const c = last ? "" : comma;
+      const isArr = Array.isArray(v);
+      if (v && typeof v === "object") {
+        const entries = isArr ? v.map((x, i) => [undefined, x]) : Object.entries(v);
+        const [o, cl] = isArr ? ["[", "]"] : ["{", "}"];
+        if (!entries.length) { out.push(`<div class="ln" style="--d:${d}">${k}<span class="p">${o}${cl}</span>${c}</div>`); return; }
+        const n = entries.length;
+        const label = isArr ? `${n} item${n > 1 ? "s" : ""}` : `${n} key${n > 1 ? "s" : ""}`;
+        out.push(`<div class="node"><div class="ln" style="--d:${d}"><span class="tw" title="Click to fold · Alt/Shift+click folds all inside">▾</span>${k}<span class="p">${o}</span><span class="sum">${label}</span><span class="sum-end"><span class="p">${cl}</span>${c}</span></div><div class="kids">`);
+        entries.forEach(([ck, cv], i) => walk(cv, d + 1, isArr ? undefined : ck, i === n - 1));
+        out.push(`</div><div class="ln end" style="--d:${d}"><span class="p">${cl}</span>${c}</div></div>`);
+      } else {
+        out.push(`<div class="ln" style="--d:${d}">${k}${scalarHtml(v)}${c}</div>`);
+      }
+    })(value, 0, undefined, true);
+    return out.join("");
+  }
+  function setAllFolds(closed) {
+    const nodes = outBody.querySelectorAll(".tree .node");
+    nodes.forEach((n, i) => n.classList.toggle("closed", closed && i !== 0)); // keep root open
+  }
+
   // Core
   function run(minify = false, quiet = false) {
     const text = input.value;
@@ -425,8 +495,9 @@
       const ind = indent === "tab" ? "\t" : +indent;
       lastOutput = minify ? JSON.stringify(data) : JSON.stringify(data, null, ind);
       const lines = lastOutput.split("\n").length;
-      outBody.innerHTML =
-        `<div class="out code-font"><div class="gutter">${Array.from({ length: lines }, (_, i) => i + 1).join("\n")}</div><pre>${highlight(lastOutput)}</pre></div>`;
+      outBody.innerHTML = minify
+        ? `<div class="out code-font"><div class="gutter">1</div><pre>${highlight(lastOutput)}</pre></div>`
+        : `<div class="tree code-font" style="--ind:${indent === "tab" ? 4 : indent}ch">${renderTree(data)}</div>`;
       dot.className = "dot ok";
       const { keys, depth } = analyze(data);
       const inSize = new Blob([text]).size, outSize = new Blob([lastOutput]).size;
@@ -454,6 +525,16 @@
   }
 
   // Events
+  // Fold / unfold: click the arrow or the "N keys" pill; Alt/Shift+click applies to everything inside
+  outBody.addEventListener("click", (e) => {
+    const t = e.target.closest(".tw, .sum"); if (!t) return;
+    const node = t.closest(".node");
+    const closing = !node.classList.contains("closed");
+    node.classList.toggle("closed", closing);
+    if (e.altKey || e.shiftKey) node.querySelectorAll(".node").forEach((n) => n.classList.toggle("closed", closing));
+  });
+  $("expandBtn").onclick = () => setAllFolds(false);
+  $("collapseBtn").onclick = () => setAllFolds(true);
   $("formatBtn").onclick = () => run(false);
   $("minifyBtn").onclick = () => run(true);
   $("indentSeg").onclick = (e) => {
